@@ -19,8 +19,11 @@
  **/
 
 #include "modules/planning/scenarios/traffic_light_protected/stage_approach.h"
+#include <fstream>
+#include <string>
 
 #include "cyber/common/log.h"
+#include "cyber/time/time.h"
 #include "modules/map/pnc_map/path.h"
 #include "modules/planning/planning_base/common/frame.h"
 #include "modules/planning/planning_base/common/planning_context.h"
@@ -71,6 +74,16 @@ StageResult TrafficLightProtectedStageApproach::Process(const TrajectoryPoint& p
         ADEBUG << "traffic_light_overlap_id[" << traffic_light_overlap_id << "] start_s["
                << current_traffic_light_overlap->start_s << "] distance_adc_to_stop_line[" << distance_adc_to_stop_line
                << "] color[" << signal_color << "]";
+
+        // Write distance to a dedicated log file under /tmp for debugging.
+        static const std::string kDistLogFile
+                = "/tmp/distance_adc_to_stop_line_" + std::to_string(cyber::Time::Now().ToNanosecond()) + ".txt";
+        static std::ofstream dist_log_stream(kDistLogFile, std::ios::out | std::ios::app);
+        if (dist_log_stream.is_open()) {
+            dist_log_stream << cyber::Time::Now().ToSecond()  // timestamp
+                            << " tl_id=" << traffic_light_overlap_id << " distance=" << distance_adc_to_stop_line
+                            << " color=" << signal_color << std::endl;
+        }
 
         // check distance to stop line
         if (distance_adc_to_stop_line > scenario_config.max_valid_stop_distance()) {
