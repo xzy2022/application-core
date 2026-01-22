@@ -1,36 +1,44 @@
 rule {
   name: "BACKSIDE_VEHICLE"
-  type: "BacksideVehicle"
+  type: "apollo::planning::BacksideVehicle"
 }
 rule {
   name: "CROSSWALK"
-  type: "Crosswalk"
+  type: "apollo::planning::Crosswalk"
 }
 rule {
   name: "DESTINATION"
-  type: "Destination"
+  type: "apollo::planning::Destination"
 }
 rule {
   name: "KEEP_CLEAR"
-  type: "KeepClear"
+  type: "apollo::planning::KeepClear"
 }
 rule {
   name: "REFERENCE_LINE_END"
-  type: "ReferenceLineEnd"
+  type: "apollo::planning::ReferenceLineEnd"
 }
 rule {
   name: "REROUTING"
-  type: "Rerouting"
+  type: "apollo::planning::Rerouting"
 }
 rule {
   name: "STOP_SIGN"
-  type: "StopSign"
+  type: "apollo::planning::StopSign"
 }
 rule {
   name: "TRAFFIC_LIGHT"
-  type: "TrafficLight"
+  type: "apollo::planning::TrafficLight"
 }
 rule {
   name: "YIELD_SIGN"
-  type: "YieldSign"
+  type: "apollo::planning::YieldSign"
+}
+
+###############################################################################
+# 新增的区域限速插件
+###############################################################################
+rule {
+  name: "REGION_SPEED_LIMIT"
+  type: "apollo::planning::RegionSpeedLimit"
 }
