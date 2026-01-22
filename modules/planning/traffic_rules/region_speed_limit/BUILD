@@ -32,4 +32,3 @@ apollo_plugin(
 apollo_package()
 
 cpplint()
-region_speed_limit.proto
