@@ -76,8 +76,8 @@ StageResult TrafficLightProtectedStageApproach::Process(const TrajectoryPoint& p
                << "] color[" << signal_color << "]";
 
         // Write distance to a dedicated log file under /tmp for debugging.
-        static const std::string kDistLogFile
-                = "/tmp/distance_adc_to_stop_line_" + std::to_string(cyber::Time::Now().ToNanosecond()) + ".txt";
+        // Fixed filename so logs accumulate in one place during simulation runs.
+        static const std::string kDistLogFile = "/tmp/distance_adc_to_stop_line.txt";
         static std::ofstream dist_log_stream(kDistLogFile, std::ios::out | std::ios::app);
         if (dist_log_stream.is_open()) {
             dist_log_stream << cyber::Time::Now().ToSecond()  // timestamp
