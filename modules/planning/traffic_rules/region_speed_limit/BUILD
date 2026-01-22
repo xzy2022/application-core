@@ -19,14 +19,17 @@ apollo_plugin(
     hdrs = [
         "region_speed_limit.h",
     ],
+    # 保持 buildtool 生成的文件名
     description = ":plugin_region_speed_limit_description.xml",
     deps = [
         "//cyber",
+        # 必须补上下面这个依赖，否则编译不过
+        "//modules/planning/planning_interface_base:apollo_planning_planning_interface_base",
         "//modules/planning/traffic_rules/region_speed_limit/proto:region_speed_limit_proto",
-
     ],
 )
 
 apollo_package()
 
 cpplint()
+region_speed_limit.proto
