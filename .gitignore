@@ -1,5 +1,7 @@
 dumps/
 
+.agent/*
+
 # Bazel
 bazel-*
 
