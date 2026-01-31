@@ -44,6 +44,12 @@ using apollo::common::math::Vec2d;
 constexpr double kIntersectionClearanceDist = 20.0;
 constexpr double kJunctionClearanceDist = 15.0;
 
+common::Status LaneBorrowPath::Init(const LaneBorrowPathConfig& config) {
+  config_ = config;
+  AINFO << "[LaneBorrowPath] Init called with enable_debug_log: " << config_.enable_debug_log();
+  return common::Status::OK();
+}
+
 bool LaneBorrowPath::Init(const std::string& config_dir,
                           const std::string& name,
                           const std::shared_ptr<DependencyInjector>& injector) {
@@ -56,6 +62,10 @@ bool LaneBorrowPath::Init(const std::string& config_dir,
 
 apollo::common::Status LaneBorrowPath::Process(
     Frame* frame, ReferenceLineInfo* reference_line_info) {
+  if (config_.enable_debug_log()) {
+    WriteDebugLog("--- LaneBorrowPath::Process ---");
+    WriteDebugLog("ADC speed: " + std::to_string(frame->PlanningStartPoint().v()));
+  }
   AINFO << "[LaneBorrowPath] Process started, is_allow_lane_borrowing: " 
         << config_.is_allow_lane_borrowing();
   if (!config_.is_allow_lane_borrowing() ||
@@ -68,6 +78,9 @@ apollo::common::Status LaneBorrowPath::Process(
     return Status::OK();
   }
   if (!IsNecessaryToBorrowLane()) {
+    if (config_.enable_debug_log()) {
+      WriteDebugLog("IsNecessaryToBorrowLane returned false.");
+    }
     ADEBUG << "No need to borrow lane";
     return Status::OK();
   }
@@ -364,6 +377,9 @@ bool LaneBorrowPath::IsNecessaryToBorrowLane() {
   auto* mutable_path_decider_status = injector_->planning_context()
                                           ->mutable_planning_status()
                                           ->mutable_path_decider();
+  if (config_.enable_debug_log()) {
+    WriteDebugLog("Checking IsNecessaryToBorrowLane...");
+  }
   if (mutable_path_decider_status->is_in_path_lane_borrow_scenario()) {
     UpdateSelfPathInfo();
     // If originally borrowing neighbor lane:
@@ -378,25 +394,47 @@ bool LaneBorrowPath::IsNecessaryToBorrowLane() {
     // If originally not borrowing neighbor lane:
     AINFO << "Blocking obstacle ID["
           << mutable_path_decider_status->front_static_obstacle_id() << "]";
+    if (config_.enable_debug_log()) {
+      WriteDebugLog("Current status: Not in lane borrow scenario.");
+      WriteDebugLog("Front static obstacle ID: [" + mutable_path_decider_status->front_static_obstacle_id() + "]");
+    }
     // ADC requirements check for lane-borrowing:
     if (!HasSingleReferenceLine(*frame_)) {
+      if (config_.enable_debug_log()) {
+        WriteDebugLog("Failed: HasSingleReferenceLine is false (size: " + std::to_string(frame_->reference_line_info().size()) + ")");
+      }
       return false;
     }
     if (!IsWithinSidePassingSpeedADC(*frame_)) {
+      if (config_.enable_debug_log()) {
+        WriteDebugLog("Failed: IsWithinSidePassingSpeedADC is false (speed: " + std::to_string(frame_->PlanningStartPoint().v()) + " > threshold: " + std::to_string(config_.lane_borrow_max_speed()) + ")");
+      }
       return false;
     }
 
     // Obstacle condition check for lane-borrowing:
     if (!IsBlockingObstacleFarFromIntersection(*reference_line_info_)) {
+      if (config_.enable_debug_log()) {
+        WriteDebugLog("Failed: IsBlockingObstacleFarFromIntersection is false.");
+      }
       return false;
     }
     if (!IsLongTermBlockingObstacle()) {
+      if (config_.enable_debug_log()) {
+        WriteDebugLog("Failed: IsLongTermBlockingObstacle is false (counter: " + std::to_string(injector_->planning_context()->planning_status().path_decider().front_static_obstacle_cycle_counter()) + ")");
+      }
       return false;
     }
     if (!IsBlockingObstacleWithinDestination(*reference_line_info_)) {
+      if (config_.enable_debug_log()) {
+        WriteDebugLog("Failed: IsBlockingObstacleWithinDestination is false.");
+      }
       return false;
     }
     if (!IsSidePassableObstacle(*reference_line_info_)) {
+      if (config_.enable_debug_log()) {
+        WriteDebugLog("Failed: IsSidePassableObstacle is false.");
+      }
       return false;
     }
 
@@ -407,6 +445,9 @@ bool LaneBorrowPath::IsNecessaryToBorrowLane() {
       bool right_borrowable;
       CheckLaneBorrow(*reference_line_info_, &left_borrowable,
                       &right_borrowable);
+      if (config_.enable_debug_log()) {
+        WriteDebugLog("CheckLaneBorrow result: left=" + std::to_string(left_borrowable) + ", right=" + std::to_string(right_borrowable));
+      }
       if (!left_borrowable && !right_borrowable) {
         mutable_path_decider_status->set_is_in_path_lane_borrow_scenario(false);
         AINFO << "LEFT AND RIGHT LANE CAN NOT BORROW";
@@ -424,6 +465,9 @@ bool LaneBorrowPath::IsNecessaryToBorrowLane() {
       }
     }
     use_self_lane_ = 0;
+    if (config_.enable_debug_log()) {
+      WriteDebugLog("Success: Switched to LANE-BORROW path scenario.");
+    }
     AINFO << "Switch from SELF-LANE path to LANE-BORROW path.";
   }
   return mutable_path_decider_status->is_in_path_lane_borrow_scenario();
@@ -791,3 +835,12 @@ int GetBackToInLaneIndex(
 
 }  // namespace planning
 }  // namespace apollo
+
+void apollo::planning::LaneBorrowPath::WriteDebugLog(const std::string& msg) {
+  if (!config_.enable_debug_log()) return;
+  std::ofstream log_file("/apollo/data/log/lane_borrow_debug.log", std::ios::app);
+  if (log_file.is_open()) {
+    log_file << apollo::cyber::Clock::NowInSeconds() << " [LaneBorrowPath] " << msg << std::endl;
+    log_file.close();
+  }
+}

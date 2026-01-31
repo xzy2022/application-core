@@ -11,4 +11,5 @@ message LaneBorrowPathConfig {
   optional double lane_borrow_max_speed = 3 [default = 5.0];
   // Determine if the obstacle is long-term parking
   optional int64 long_term_blocking_obstacle_cycle_threshold =4 [default = 3];
+  optional bool enable_debug_log = 5 [default = false];
 }

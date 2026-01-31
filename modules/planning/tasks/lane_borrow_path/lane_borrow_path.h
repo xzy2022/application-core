@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <fstream>
 #include <memory>
 #include <string>
 #include <tuple>
@@ -36,6 +37,7 @@ class LaneBorrowPath : public PathGeneration {
  public:
   bool Init(const std::string& config_dir, const std::string& name,
             const std::shared_ptr<DependencyInjector>& injector) override;
+  apollo::common::Status Init(const LaneBorrowPathConfig& config);
 
  private:
   apollo::common::Status Process(
@@ -88,6 +90,7 @@ class LaneBorrowPath : public PathGeneration {
   bool IsSidePassableObstacle(const ReferenceLineInfo& reference_line_info);
 
   void UpdateSelfPathInfo();
+  void WriteDebugLog(const std::string& msg);
   /**
    * @brief Check whether neighbor lane is borrowable
    * @param reference_line_info is input reference line info
