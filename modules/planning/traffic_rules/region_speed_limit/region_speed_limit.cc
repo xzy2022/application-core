@@ -18,6 +18,7 @@
  * @file region_speed_limit.cc
  *****************************************************************************/
 
+ #include <fstream>
  #include <memory>
  #include "modules/planning/traffic_rules/region_speed_limit/region_speed_limit.h"
  
@@ -38,14 +39,23 @@
  }
  
  Status RegionSpeedLimit::ApplyRule(Frame* const frame, ReferenceLineInfo* const reference_line_info) {
-     ReferenceLine* reference_line = reference_line_info->mutable_reference_line();
-     const std::vector<PathOverlap>& pnc_junction_overlaps
-             = reference_line_info->reference_line().map_path().pnc_junction_overlaps();
-     for (const auto& pnc_junction_overlap : pnc_junction_overlaps) {
-         reference_line->AddSpeedLimit(
-                 pnc_junction_overlap.start_s - config_.forward_buffer(),
-                 pnc_junction_overlap.end_s + config_.backward_buffer(),
-                 config_.limit_speed());
+    ReferenceLine* reference_line = reference_line_info->mutable_reference_line();
+    const std::vector<PathOverlap>& pnc_junction_overlaps
+            = reference_line_info->reference_line().map_path().pnc_junction_overlaps();
+    std::ofstream debug_ofs("/tmp/test.txt", std::ios::app);
+    if (debug_ofs.is_open()) {
+        debug_ofs << "pnc_junction_overlaps size: "
+                  << pnc_junction_overlaps.size() << "\n";
+    }
+    for (const auto& pnc_junction_overlap : pnc_junction_overlaps) {
+        if (debug_ofs.is_open()) {
+            debug_ofs << "start_s: " << pnc_junction_overlap.start_s
+                      << ", end_s: " << pnc_junction_overlap.end_s << "\n";
+        }
+        reference_line->AddSpeedLimit(
+                pnc_junction_overlap.start_s - 200.0,
+                pnc_junction_overlap.end_s + 200.0,
+                 1.0);
      }
      return Status::OK();
  }
