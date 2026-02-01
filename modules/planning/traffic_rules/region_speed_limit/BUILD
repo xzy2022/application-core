@@ -23,7 +23,6 @@ apollo_plugin(
     ],
     description = ":plugins.xml",
     deps = [
-        "//cyber",
         # 添加该插件所需依赖
         "//modules/planning/planning_interface_base:apollo_planning_planning_interface_base",
         "//modules/planning/traffic_rules/region_speed_limit/proto:region_speed_limit_proto",
