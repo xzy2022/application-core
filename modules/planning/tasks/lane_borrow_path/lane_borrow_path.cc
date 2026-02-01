@@ -324,6 +324,25 @@ bool LaneBorrowPath::GetBoundaryFromNeighborLane(
   double past_lane_right_width = adc_lane_width / 2.0;
   int path_blocked_idx = -1;
   
+  // NEW: Find the leftmost obstacle's L value for dynamic left boundary adjustment
+  double leftmost_obstacle_l = 0.0;  // Default: reference line center
+  if (pass_direction == SidePassDirection::RIGHT_BORROW) {
+    auto obstacles = reference_line_info_->path_decision()->obstacles();
+    double max_l_value = -1000.0;  // Initialize with very small value
+    for (const auto* obs : obstacles.Items()) {
+      if (obs->IsStatic() && !obs->IsVirtual()) {
+        double obs_end_l = obs->PerceptionSLBoundary().end_l();
+        if (obs_end_l > max_l_value) {
+          max_l_value = obs_end_l;
+        }
+      }
+    }
+    if (max_l_value > -1000.0) {
+      leftmost_obstacle_l = max_l_value;
+      WriteLaneBorrowDebug("  Leftmost obstacle L (for left boundary): " + std::to_string(leftmost_obstacle_l));
+    }
+  }
+  
   // Log first few points for debugging
   int log_count = 0;
   const int max_log = 5;
@@ -379,6 +398,11 @@ bool LaneBorrowPath::GetBoundaryFromNeighborLane(
         curr_lane_left_width + (pass_direction == SidePassDirection::LEFT_BORROW
                                     ? (curr_neighbor_lane_width + 6.0)
                                     : 0.0);
+    // NEW: For RIGHT_BORROW, shift left boundary right to match leftmost obstacle
+    if (pass_direction == SidePassDirection::RIGHT_BORROW && leftmost_obstacle_l > -999.0) {
+      // Use the leftmost obstacle's L value as left boundary (with small buffer)
+      curr_left_bound_lane = leftmost_obstacle_l + 0.1;  // 0.1m safety buffer
+    }
     double curr_right_bound_lane =
         -curr_lane_right_width -
         (pass_direction == SidePassDirection::RIGHT_BORROW
