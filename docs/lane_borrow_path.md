@@ -83,3 +83,12 @@ LANE_FOLLOW_PATH 的 nudge 逻辑检测到了障碍物，但障碍物分布导�
   LANE_BORROW_PATH → 读取上周期的 front_static_obstacle_id
                    → 如果 counter >= threshold，则尝试借道
 ```
+
+## 车道边界的含义
+
+[-4, 2]其中2表示在左侧，-4表示在右侧。最大就是最左，最小就是最右。
+
+## 障碍物的含义
+
+Obs ID: 8383 Static: 1 SL: [71.648747,71.848747] x [-5.719852,-5.519852]
+SL纵向覆盖范围，x横向覆盖范围

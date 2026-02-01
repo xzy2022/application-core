@@ -324,22 +324,29 @@ bool LaneBorrowPath::GetBoundaryFromNeighborLane(
   double past_lane_right_width = adc_lane_width / 2.0;
   int path_blocked_idx = -1;
   
-  // NEW: Find the leftmost obstacle's L value for dynamic left boundary adjustment
-  double leftmost_obstacle_l = 0.0;  // Default: reference line center
+  // NEW: Find the NEAREST obstacle's L value for dynamic left boundary adjustment
+  double nearest_obstacle_l = 0.0;  // Default: reference line center
   if (pass_direction == SidePassDirection::RIGHT_BORROW) {
     auto obstacles = reference_line_info_->path_decision()->obstacles();
-    double max_l_value = -1000.0;  // Initialize with very small value
+    std::vector<const Obstacle*> static_obstacles;
     for (const auto* obs : obstacles.Items()) {
       if (obs->IsStatic() && !obs->IsVirtual()) {
-        double obs_end_l = obs->PerceptionSLBoundary().end_l();
-        if (obs_end_l > max_l_value) {
-          max_l_value = obs_end_l;
-        }
+        static_obstacles.push_back(obs);
       }
     }
-    if (max_l_value > -1000.0) {
-      leftmost_obstacle_l = max_l_value;
-      WriteLaneBorrowDebug("  Leftmost obstacle L (for left boundary): " + std::to_string(leftmost_obstacle_l));
+    
+    if (!static_obstacles.empty()) {
+      // Sort by start_s (proximity)
+      std::sort(static_obstacles.begin(), static_obstacles.end(), 
+                [](const Obstacle* a, const Obstacle* b) {
+                  return a->PerceptionSLBoundary().start_s() < b->PerceptionSLBoundary().start_s();
+                });
+      
+      const auto* nearest_obs = static_obstacles.front();
+      nearest_obstacle_l = nearest_obs->PerceptionSLBoundary().end_l();
+      WriteLaneBorrowDebug("  Nearest valid static obstacle [" + nearest_obs->Id() 
+                           + "] s=" + std::to_string(nearest_obs->PerceptionSLBoundary().start_s())
+                           + " L (for left boundary): " + std::to_string(nearest_obstacle_l));
     }
   }
   
@@ -398,10 +405,10 @@ bool LaneBorrowPath::GetBoundaryFromNeighborLane(
         curr_lane_left_width + (pass_direction == SidePassDirection::LEFT_BORROW
                                     ? (curr_neighbor_lane_width + 6.0)
                                     : 0.0);
-    // NEW: For RIGHT_BORROW, shift left boundary right to match leftmost obstacle
-    if (pass_direction == SidePassDirection::RIGHT_BORROW && leftmost_obstacle_l > -999.0) {
-      // Use the leftmost obstacle's L value as left boundary (with small buffer)
-      curr_left_bound_lane = leftmost_obstacle_l + 0.1;  // 0.1m safety buffer
+    // NEW: For RIGHT_BORROW, shift left boundary right to match nearest obstacle
+    if (pass_direction == SidePassDirection::RIGHT_BORROW && nearest_obstacle_l != 0.0) {
+      // Use the nearest obstacle's L value as left boundary (with small buffer)
+      curr_left_bound_lane = nearest_obstacle_l + 0.1;  // 0.1m safety buffer
     }
     double curr_right_bound_lane =
         -curr_lane_right_width -
