@@ -377,12 +377,12 @@ bool LaneBorrowPath::GetBoundaryFromNeighborLane(
     
     double curr_left_bound_lane =
         curr_lane_left_width + (pass_direction == SidePassDirection::LEFT_BORROW
-                                    ? curr_neighbor_lane_width
+                                    ? (curr_neighbor_lane_width + 6.0)
                                     : 0.0);
     double curr_right_bound_lane =
         -curr_lane_right_width -
         (pass_direction == SidePassDirection::RIGHT_BORROW
-             ? curr_neighbor_lane_width
+             ? (curr_neighbor_lane_width + 6.0)
              : 0.0);
     double curr_left_bound = curr_left_bound_lane - offset_to_map;
     double curr_right_bound = curr_right_bound_lane - offset_to_map;
