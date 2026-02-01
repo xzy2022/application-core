@@ -22,6 +22,7 @@
 #include <utility>
 #include <vector>
 #include <fstream>  // Added for file logging
+#include <chrono>   // For time without cyber dependency
 
 #include "modules/common/configs/vehicle_config_helper.h"
 #include "modules/planning/planning_base/common/util/print_debug_info.h"
@@ -148,7 +149,10 @@ bool LaneFollowPath::DecidePathBounds(std::vector<PathBoundary>* boundary) {
   std::ofstream debug_log;
   debug_log.open("/apollo/data/log/lane_follow_debug.log", std::ios::app);
   if (debug_log.is_open()) {
-      debug_log << "\n[Time: " << apollo::cyber::Clock::NowInSeconds() << "] DecidePathBounds Start" << std::endl;
+      auto now = std::chrono::system_clock::now();
+      auto epoch = now.time_since_epoch();
+      double time_sec = std::chrono::duration<double>(epoch).count();
+      debug_log << "\n[Time: " << time_sec << "] DecidePathBounds Start" << std::endl;
       
       // 1. Analyze PathDecision Obstacles (Pre-filter)
       auto obstacles = reference_line_info_->path_decision()->obstacles();
@@ -209,19 +213,6 @@ bool LaneFollowPath::DecidePathBounds(std::vector<PathBoundary>* boundary) {
 
   // 3. Fine-tune the boundary based on static obstacles
   PathBound temp_path_bound = path_bound;
-  
-  // Get SLPolygons for local environment (needed for nudge detection)
-  std::vector<SLPolygon> obs_sl_polygons;
-  PathBoundsDeciderUtil::GetSLPolygons(*reference_line_info_, &obs_sl_polygons,
-                                       init_sl_state_);
-
-  // Debug Log GetSLPolygons Result
-  if (debug_log.is_open()) {
-      debug_log << "GetSLPolygons Result Count: " << obs_sl_polygons.size() << std::endl;
-      for (const auto& p : obs_sl_polygons) {
-          debug_log << "  > Poly ID: " << p.id() << " NudgeInfo: " << p.NudgeInfo() << std::endl;
-      }
-  }
 
   if (!compat::GetBoundary<PathBoundsDeciderUtil>(
           *reference_line_info_, init_sl_state_, &path_bound,
@@ -335,7 +326,8 @@ bool LaneFollowPath::DecidePathBounds(std::vector<PathBoundary>* boundary) {
                                  ->mutable_planning_status()
                                  ->mutable_lane_follow();
   if (!blocking_obstacle_id.empty()) {
-    double current_time = ::apollo::cyber::Clock::NowInSeconds();
+    auto now = std::chrono::system_clock::now();
+    double current_time = std::chrono::duration<double>(now.time_since_epoch()).count();
     lane_follow_status->set_block_obstacle_id(blocking_obstacle_id);
     if (lane_follow_status->lane_follow_block()) {
       lane_follow_status->set_block_duration(

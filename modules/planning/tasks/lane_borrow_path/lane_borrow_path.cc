@@ -24,6 +24,7 @@
 #include <utility>
 #include <vector>
 #include <fstream>
+#include <chrono>  // For time without cyber dependency
 
 #include "modules/common/configs/vehicle_config_helper.h"
 #include "modules/planning/planning_base/common/obstacle_blocking_analyzer.h"
@@ -110,7 +111,9 @@ void WriteLaneBorrowDebug(const std::string& msg) {
     g_lane_borrow_log.open("/apollo/data/log/lane_borrow_debug.log", std::ios::app);
   }
   if (g_lane_borrow_log.is_open()) {
-    g_lane_borrow_log << apollo::cyber::Clock::NowInSeconds() << " " << msg << std::endl;
+    auto now = std::chrono::system_clock::now();
+    double time_sec = std::chrono::duration<double>(now.time_since_epoch()).count();
+    g_lane_borrow_log << time_sec << " " << msg << std::endl;
     g_lane_borrow_log.flush();
   }
 }
@@ -889,7 +892,9 @@ void apollo::planning::LaneBorrowPath::WriteDebugLog(const std::string& msg) {
   if (!config_.enable_debug_log()) return;
   std::ofstream log_file("/apollo/data/log/lane_borrow_debug.log", std::ios::app);
   if (log_file.is_open()) {
-    log_file << apollo::cyber::Clock::NowInSeconds() << " [LaneBorrowPath] " << msg << std::endl;
+    auto now = std::chrono::system_clock::now();
+    double time_sec = std::chrono::duration<double>(now.time_since_epoch()).count();
+    log_file << time_sec << " [LaneBorrowPath] " << msg << std::endl;
     log_file.close();
   }
 }
