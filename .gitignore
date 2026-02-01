@@ -2,6 +2,8 @@ dumps/
 
 .agent/*
 
+error_log/*
+
 # Bazel
 bazel-*
 
