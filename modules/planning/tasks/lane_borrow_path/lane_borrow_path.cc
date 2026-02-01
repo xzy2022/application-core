@@ -42,6 +42,63 @@ using apollo::common::math::Box2d;
 using apollo::common::math::Polygon2d;
 using apollo::common::math::Vec2d;
 
+namespace compat {
+
+// C++17 void_t polyfill for C++14 support
+template <typename... Ts> struct make_void { typedef void type; };
+template <typename... Ts> using void_t = typename make_void<Ts...>::type;
+
+// SFINAE helper to detect if the 5-parameter version exists
+template <typename T, typename = void>
+struct has_5_param_func : std::false_type {};
+
+template <typename T>
+struct has_5_param_func<T, void_t<decltype(T::GetBoundaryFromStaticObstacles(
+    std::declval<const apollo::planning::ReferenceLineInfo&>(),
+    std::declval<const apollo::planning::SLState&>(),
+    std::declval<apollo::planning::PathBoundary*>(),
+    std::declval<std::string*>(),
+    std::declval<double*>()
+))>> : std::true_type {};
+
+// Official Environment (5 params) - Enabled if has_5_param_func is true
+template <typename T>
+typename std::enable_if<has_5_param_func<T>::value, bool>::type
+GetBoundary(
+    const apollo::planning::ReferenceLineInfo& info, 
+    const apollo::planning::SLState& state,
+    apollo::planning::PathBoundary* bound, 
+    std::string* block_id, 
+    double* width) {
+    return T::GetBoundaryFromStaticObstacles(info, state, bound, block_id, width);
+}
+
+// Local Environment (6 params) - Enabled if has_5_param_func is false
+template <typename T>
+typename std::enable_if<!has_5_param_func<T>::value, bool>::type
+GetBoundary(
+    const apollo::planning::ReferenceLineInfo& info, 
+    const apollo::planning::SLState& state,
+    apollo::planning::PathBoundary* bound, 
+    std::string* block_id, 
+    double* width) {
+    std::vector<apollo::planning::SLPolygon> obs_polygons;
+    
+    // Copy state and cast info to non-const for local API compatibility
+    apollo::planning::SLState state_copy = state; 
+    apollo::planning::ReferenceLineInfo& info_ref = const_cast<apollo::planning::ReferenceLineInfo&>(info);
+    
+    T::GetSLPolygons(info_ref, &obs_polygons, state_copy);
+    return T::GetBoundaryFromStaticObstacles(info_ref, &obs_polygons, state_copy, bound, block_id, width);
+}
+
+} // namespace compat
+
+// Fallback for missing flags in official environment
+#ifndef FLAGS_path_trim_destination_threshold
+static const double FLAGS_path_trim_destination_threshold = 15.0;
+#endif
+
 constexpr double kIntersectionClearanceDist = 20.0;
 constexpr double kJunctionClearanceDist = 15.0;
 
@@ -173,22 +230,9 @@ bool LaneBorrowPath::DecidePathBounds(std::vector<PathBoundary>* boundary) {
                              " x [" + std::to_string(obs->PerceptionSLBoundary().start_l()) + "," + std::to_string(obs->PerceptionSLBoundary().end_l()) + "]");
     }
 
-#ifdef APOLLO_OFFICIAL_BUILD
-    // Official environment uses 5-parameter version
-    if (!PathBoundsDeciderUtil::GetBoundaryFromStaticObstacles(
+    if (!compat::GetBoundary<PathBoundsDeciderUtil>(
             *reference_line_info_, init_sl_state_,
             &path_bound, &blocking_obstacle_id, &path_narrowest_width)) {
-#else
-    // Local environment uses 6-parameter version with SLPolygon
-    std::vector<SLPolygon> obs_sl_polygons;
-    PathBoundsDeciderUtil::GetSLPolygons(*reference_line_info_,
-                                         &obs_sl_polygons, init_sl_state_);
-    WriteLaneBorrowDebug("SLPolygons count: " + std::to_string(obs_sl_polygons.size()));
-    
-    if (!PathBoundsDeciderUtil::GetBoundaryFromStaticObstacles(
-            *reference_line_info_, &obs_sl_polygons, init_sl_state_,
-            &path_bound, &blocking_obstacle_id, &path_narrowest_width)) {
-#endif
       WriteLaneBorrowDebug("GetBoundaryFromStaticObstacles FAILED");
       boundary->pop_back();
       continue;
