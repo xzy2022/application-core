@@ -330,7 +330,8 @@ bool LaneBorrowPath::GetBoundaryFromNeighborLane(
     auto obstacles = reference_line_info_->path_decision()->obstacles();
     std::vector<const Obstacle*> static_obstacles;
     for (const auto* obs : obstacles.Items()) {
-      if (obs->IsStatic() && !obs->IsVirtual()) {
+      if (obs->IsStatic() && !obs->IsVirtual() && 
+          obs->PerceptionSLBoundary().start_s() > 0.0) {
         static_obstacles.push_back(obs);
       }
     }
