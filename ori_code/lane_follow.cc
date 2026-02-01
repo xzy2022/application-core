@@ -33,71 +33,8 @@
 namespace apollo {
 namespace planning {
 
-
 using apollo::common::Status;
 using apollo::common::VehicleConfigHelper;
-
-namespace compat {
-
-// C++17 void_t polyfill for C++14 support
-template <typename... Ts> struct make_void { typedef void type; };
-template <typename... Ts> using void_t = typename make_void<Ts...>::type;
-
-// SFINAE helper to detect if the 5-parameter version exists
-template <typename T, typename = void>
-struct has_5_param_func : std::false_type {};
-
-template <typename T>
-struct has_5_param_func<T, void_t<decltype(T::GetBoundaryFromStaticObstacles(
-    std::declval<const apollo::planning::ReferenceLineInfo&>(),
-    std::declval<const apollo::planning::SLState&>(),
-    std::declval<apollo::planning::PathBoundary*>(),
-    std::declval<std::string*>(),
-    std::declval<double*>()
-))>> : std::true_type {};
-
-// Official Environment (5 params) - Enabled if has_5_param_func is true
-template <typename T>
-typename std::enable_if<has_5_param_func<T>::value, bool>::type
-GetBoundary(
-    const apollo::planning::ReferenceLineInfo& info, 
-    const apollo::planning::SLState& state,
-    apollo::planning::PathBoundary* bound, 
-    std::string* block_id, 
-    double* width) {
-    return T::GetBoundaryFromStaticObstacles(info, state, bound, block_id, width);
-}
-
-// Local Environment (6 params) - Enabled if has_5_param_func is false
-template <typename T>
-typename std::enable_if<!has_5_param_func<T>::value, bool>::type
-GetBoundary(
-    const apollo::planning::ReferenceLineInfo& info, 
-    const apollo::planning::SLState& state,
-    apollo::planning::PathBoundary* bound, 
-    std::string* block_id, 
-    double* width) {
-    std::vector<apollo::planning::SLPolygon> obs_polygons;
-    // We assume GetSLPolygons exists in Local env if 6-param GetBoundary exists
-    // Note: Local env signature might require non-const SLState if passed as init_sl_state_ which is usually SLState
-    // But GetSLPolygons signature in local build log was: GetSLPolygons(ReferenceLineInfo&, vector<SLPolygon>*, SLState&)
-    // So we match that. But inside this function 'state' is const SLState&. 
-    // We might need to copy state if local API demands non-const reference. 
-    // Log says: GetSLPolygons(ReferenceLineInfo&, ..., SLState&) -- the last arg is SLState& (non-const).
-    // Let's make a copy to stay safe.
-    apollo::planning::SLState state_copy = state; 
-    
-    // Also ReferenceLineInfo needs to be non-const for local GetSLPolygons according to log error?
-    // Log: GetSLPolygons(ReferenceLineInfo&, ...) -> Yes, non-const. 
-    // So we need const_cast.
-    apollo::planning::ReferenceLineInfo& info_ref = const_cast<apollo::planning::ReferenceLineInfo&>(info);
-    
-    T::GetSLPolygons(info_ref, &obs_polygons, state_copy);
-    return T::GetBoundaryFromStaticObstacles(info_ref, &obs_polygons, state_copy, bound, block_id, width);
-}
-
-} // namespace compat
-
 
 bool LaneFollowPath::Init(const std::string& config_dir,
                           const std::string& name,
@@ -209,8 +146,6 @@ bool LaneFollowPath::DecidePathBounds(std::vector<PathBoundary>* boundary) {
 
   // 3. Fine-tune the boundary based on static obstacles
   PathBound temp_path_bound = path_bound;
-  
-  // Get SLPolygons for local environment (needed for nudge detection)
   std::vector<SLPolygon> obs_sl_polygons;
   PathBoundsDeciderUtil::GetSLPolygons(*reference_line_info_, &obs_sl_polygons,
                                        init_sl_state_);
@@ -223,8 +158,8 @@ bool LaneFollowPath::DecidePathBounds(std::vector<PathBoundary>* boundary) {
       }
   }
 
-  if (!compat::GetBoundary<PathBoundsDeciderUtil>(
-          *reference_line_info_, init_sl_state_, &path_bound,
+  if (!PathBoundsDeciderUtil::GetBoundaryFromStaticObstacles(
+          *reference_line_info_, &obs_sl_polygons, init_sl_state_, &path_bound,
           &blocking_obstacle_id, &path_narrowest_width)) {
     const std::string msg =
         "Failed to decide fine tune the boundaries after "
@@ -234,87 +169,50 @@ bool LaneFollowPath::DecidePathBounds(std::vector<PathBoundary>* boundary) {
     return false;
   }
 
-  // --- Direct Blocking Detection (based on obstacle SL boundary) ---
+  // --- Nudge Conflict Detection Logic ---
   if (debug_log.is_open()) {
       debug_log << "Initial blocking_obstacle_id: [" << blocking_obstacle_id << "]" << std::endl;
       debug_log << "Path narrowest width: " << path_narrowest_width << std::endl;
   }
 
-  // If GetBoundaryFromStaticObstacles didn't set a blocking obstacle, 
-  // check if any obstacle in the lane makes passage impossible or requires lane borrow
   if (blocking_obstacle_id.empty()) {
-    double vehicle_width = VehicleConfigHelper::GetConfig().vehicle_param().width();
-    double min_passable_width = vehicle_width + 0.5;  // Need at least vehicle width + buffer
+    bool has_left = false, has_right = false;
+    std::string left_id, right_id;
+    int lc = 0, rc = 0, bc = 0, ic = 0;
     
-    auto obstacles = reference_line_info_->path_decision()->obstacles();
-    double adc_s = reference_line_info_->AdcSlBoundary().end_s();
-    
-    // IsNonmovableObstacle uses kAdcDistanceThreshold = 35m
-    constexpr double kMaxCheckDistance = 35.0;
-    
-    // Find the nearest obstacle that either blocks the lane or significantly occupies it
-    const Obstacle* nearest_blocking_obs = nullptr;
-    double nearest_s = std::numeric_limits<double>::max();
-    
-    for (const auto* obs : obstacles.Items()) {
-      if (!obs->IsStatic() || obs->IsVirtual()) continue;
-      
-      const auto& sl = obs->PerceptionSLBoundary();
-      
-      // Only consider obstacles ahead of ADC and within 35m (to pass IsNonmovableObstacle check)
-      if (sl.start_s() < adc_s) continue;
-      if (sl.start_s() > adc_s + kMaxCheckDistance) continue;
-      
-      double lane_left_width = 1.75;  // Default half lane width
-      double lane_right_width = 1.75;
-      reference_line_info_->reference_line().GetLaneWidth(
-          sl.start_s(), &lane_left_width, &lane_right_width);
-      
-      double obs_left_l = sl.end_l();
-      double obs_right_l = sl.start_l();
-      
-      // Space on right side of obstacle
-      double right_space = obs_right_l - (-lane_right_width);
-      // Space on left side of obstacle
-      double left_space = lane_left_width - obs_left_l;
-      
-      // Check if obstacle is in the lane (not completely outside)
-      bool in_lane = (obs_left_l > -lane_right_width) && (obs_right_l < lane_left_width);
-      
-      if (debug_log.is_open()) {
-          debug_log << "  Check obstacle " << obs->Id() 
-                    << " s=" << sl.start_s() << " L=[" << obs_right_l << ", " << obs_left_l << "]"
-                    << " LaneW=[" << -lane_right_width << ", " << lane_left_width << "]"
-                    << " RightSpace=" << right_space << " LeftSpace=" << left_space
-                    << " InLane=" << in_lane
-                    << std::endl;
-      }
-      
-      // Blocking conditions:
-      // 1. Neither side has enough space (complete blockage)
-      // 2. Obstacle is in lane and one side doesn't have enough space (need to borrow other lane)
-      bool complete_block = (right_space < min_passable_width && left_space < min_passable_width);
-      bool need_borrow = in_lane && (right_space < min_passable_width || left_space < min_passable_width);
-      
-      if (complete_block || need_borrow) {
-        if (sl.start_s() < nearest_s) {
-          nearest_s = sl.start_s();
-          nearest_blocking_obs = obs;
-          if (debug_log.is_open()) {
-            debug_log << "    -> Candidate blocking obs (complete=" << complete_block 
-                      << ", borrow=" << need_borrow << ")" << std::endl;
-          }
-        }
+    for (const auto& p : obs_sl_polygons) {
+      auto n = p.NudgeInfo();
+      if (n == SLPolygon::LEFT_NUDGE) {
+        has_left = true; left_id = p.id(); lc++;
+      } else if (n == SLPolygon::RIGHT_NUDGE) {
+        has_right = true; right_id = p.id(); rc++;
+      } else if (n == SLPolygon::BLOCKED) {
+        bc++;
+      } else if (n == SLPolygon::IGNORE) {
+        ic++;
       }
     }
     
-    if (nearest_blocking_obs != nullptr) {
-      blocking_obstacle_id = nearest_blocking_obs->Id();
+    if (debug_log.is_open()) {
+        debug_log << "Nudge Summary: L=" << lc << ", R=" << rc << ", B=" << bc << ", I=" << ic << std::endl;
+    }
+    
+    if (has_left && has_right) {
+      double w = VehicleConfigHelper::GetConfig().vehicle_param().width();
+      double m = w + 0.5;
+      
       if (debug_log.is_open()) {
-          debug_log << ">>> DETECTED BLOCKING OBSTACLE: " << blocking_obstacle_id 
-                    << " at s=" << nearest_s << " <<<" << std::endl;
+          debug_log << "CONFLICT DETECTED! Left+Right Nudge." << std::endl;
+          debug_log << "Vehicle Width: " << w << ", Min Passable: " << m << ", Actual: " << path_narrowest_width << std::endl;
       }
-      AINFO << "[LaneFollowPath] DIRECT BLOCKING DETECTED: " << blocking_obstacle_id;
+      
+      if (path_narrowest_width < m) {
+        blocking_obstacle_id = right_id.empty() ? left_id : right_id;
+        if (debug_log.is_open()) debug_log << ">>> SETTING BLOCKING ID: " << blocking_obstacle_id << " <<<" << std::endl;
+        AINFO << "[LaneFollowPath] CONFLICT BLOCKED! Set id: " << blocking_obstacle_id;
+      } else {
+        if (debug_log.is_open()) debug_log << "Width sufficient, PASSABLE." << std::endl;
+      }
     }
   }
 
