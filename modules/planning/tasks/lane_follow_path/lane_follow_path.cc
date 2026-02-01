@@ -128,6 +128,16 @@ apollo::common::Status LaneFollowPath::Process(
   }
   if (!OptimizePath(candidate_path_boundaries, &candidate_path_data)) {
     AERROR << "Optmize path failed";
+    // Even if optimization fails, propagate blocking obstacle to path_decider
+    // so that lane_borrow_path can eventually be triggered
+    for (const auto& boundary : candidate_path_boundaries) {
+      if (!boundary.blocking_obstacle_id().empty()) {
+        reference_line_info->SetBlockingObstacle(boundary.blocking_obstacle_id());
+        AINFO << "[LaneFollowPath] OptimizePath failed, setting blocking_obstacle_id: " 
+              << boundary.blocking_obstacle_id();
+        break;
+      }
+    }
     return Status::OK();
   }
   if (!AssessPath(&candidate_path_data,
@@ -225,14 +235,14 @@ bool LaneFollowPath::DecidePathBounds(std::vector<PathBoundary>* boundary) {
     return false;
   }
 
-  // --- Direct Blocking Detection (based on obstacle SL boundary) ---
+  // --- Debug Log ---
   if (debug_log.is_open()) {
       debug_log << "Initial blocking_obstacle_id: [" << blocking_obstacle_id << "]" << std::endl;
       debug_log << "Path narrowest width: " << path_narrowest_width << std::endl;
   }
 
-  // If GetBoundaryFromStaticObstacles didn't set a blocking obstacle, 
-  // check if any obstacle in the lane makes passage impossible or requires lane borrow
+  // --- Direct Blocking Detection (for local env where GetBoundaryFromStaticObstacles doesn't set blocking_id) ---
+  // Only executes if blocking_obstacle_id is empty (official env usually sets it)
   if (blocking_obstacle_id.empty()) {
     double vehicle_width = VehicleConfigHelper::GetConfig().vehicle_param().width();
     double min_passable_width = vehicle_width + 0.5;  // Need at least vehicle width + buffer
@@ -252,7 +262,7 @@ bool LaneFollowPath::DecidePathBounds(std::vector<PathBoundary>* boundary) {
       
       const auto& sl = obs->PerceptionSLBoundary();
       
-      // Only consider obstacles ahead of ADC and within 35m (to pass IsNonmovableObstacle check)
+      // Only consider obstacles ahead of ADC and within 35m
       if (sl.start_s() < adc_s) continue;
       if (sl.start_s() > adc_s + kMaxCheckDistance) continue;
       
@@ -307,6 +317,10 @@ bool LaneFollowPath::DecidePathBounds(std::vector<PathBoundary>* boundary) {
       }
       AINFO << "[LaneFollowPath] DIRECT BLOCKING DETECTED: " << blocking_obstacle_id;
     }
+  }
+  
+  if (debug_log.is_open()) {
+      debug_log << "Final blocking_obstacle_id: [" << blocking_obstacle_id << "]" << std::endl;
   }
 
   // Close log file

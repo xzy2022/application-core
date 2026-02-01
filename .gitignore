@@ -5,6 +5,11 @@ dumps/
 error_log/*
 error_log_v2/*
 error_log_v3/*
+error_log_v4/*
+error_log_v5/*
+error_log_v6/*
+
+fail_log_v1/*
 
 # Bazel
 bazel-*
