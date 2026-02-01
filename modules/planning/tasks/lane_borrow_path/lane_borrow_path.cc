@@ -163,6 +163,17 @@ bool LaneBorrowPath::DecidePathBounds(std::vector<PathBoundary>* boundary) {
     // 3. Static obstacles
     PathBound temp_path_bound = path_bound;
     std::vector<SLPolygon> obs_sl_polygons;
+    
+    // DEBUG: Log PathDecision obstacles
+    auto obstacles = reference_line_info_->path_decision()->obstacles();
+    WriteLaneBorrowDebug("PathDecision Total Obstacles: " + std::to_string(obstacles.Items().size()));
+    for (const auto* obs : obstacles.Items()) {
+        WriteLaneBorrowDebug("  > Obs ID: " + obs->Id() + 
+                             " Static: " + std::to_string(obs->IsStatic()) +
+                             " SL: [" + std::to_string(obs->PerceptionSLBoundary().start_s()) + "," + std::to_string(obs->PerceptionSLBoundary().end_s()) + "]" +
+                             " x [" + std::to_string(obs->PerceptionSLBoundary().start_l()) + "," + std::to_string(obs->PerceptionSLBoundary().end_l()) + "]");
+    }
+
     PathBoundsDeciderUtil::GetSLPolygons(*reference_line_info_,
                                          &obs_sl_polygons, init_sl_state_);
     WriteLaneBorrowDebug("SLPolygons count: " + std::to_string(obs_sl_polygons.size()));
