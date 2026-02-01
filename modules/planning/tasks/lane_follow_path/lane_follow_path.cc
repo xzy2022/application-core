@@ -21,6 +21,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <fstream>  // Added for file logging
 
 #include "modules/common/configs/vehicle_config_helper.h"
 #include "modules/planning/planning_base/common/util/print_debug_info.h"
@@ -28,6 +29,7 @@
 #include "modules/planning/planning_interface_base/task_base/common/path_util/path_assessment_decider_util.h"
 #include "modules/planning/planning_interface_base/task_base/common/path_util/path_bounds_decider_util.h"
 #include "modules/planning/planning_interface_base/task_base/common/path_util/path_optimizer_util.h"
+
 namespace apollo {
 namespace planning {
 
@@ -40,7 +42,6 @@ bool LaneFollowPath::Init(const std::string& config_dir,
   if (!Task::Init(config_dir, name, injector)) {
     return false;
   }
-  // Load the config this task.
   return Task::LoadConfig<LaneFollowPathConfig>(&config_);
 }
 
@@ -79,13 +80,37 @@ bool LaneFollowPath::DecidePathBounds(std::vector<PathBoundary>* boundary) {
   std::string blocking_obstacle_id = "";
   std::string lane_type = "";
   double path_narrowest_width = 0;
+
+  // Dedicated Debug Logging
+  std::ofstream debug_log;
+  debug_log.open("/apollo/data/log/lane_follow_debug.log", std::ios::app);
+  if (debug_log.is_open()) {
+      debug_log << "\n[Time: " << apollo::cyber::Clock::NowInSeconds() << "] DecidePathBounds Start" << std::endl;
+      
+      // 1. Analyze PathDecision Obstacles (Pre-filter)
+      auto obstacles = reference_line_info_->path_decision()->obstacles();
+      debug_log << "PathDecision Total Obstacles: " << obstacles.Items().size() << std::endl;
+      for (const auto* obs : obstacles.Items()) {
+          debug_log << "  > Obs ID: " << obs->Id() 
+                    << " Static: " << obs->IsStatic()
+                    << " Virtual: " << obs->IsVirtual()
+                    << " Blocking: " << obs->IsBlockingObstacle()
+                    << " LateralDecision: " << obs->LateralDecision().DebugString()
+                    << " SL: [" << obs->PerceptionSLBoundary().start_s() << ", " << obs->PerceptionSLBoundary().end_s() 
+                    << "] x [" << obs->PerceptionSLBoundary().start_l() << ", " << obs->PerceptionSLBoundary().end_l() << "]"
+                    << std::endl;
+      }
+  }
+
   // 1. Initialize the path boundaries to be an indefinitely large area.
   if (!PathBoundsDeciderUtil::InitPathBoundary(*reference_line_info_,
                                                &path_bound, init_sl_state_)) {
     const std::string msg = "Failed to initialize path boundaries.";
     AERROR << msg;
+    if (debug_log.is_open()) debug_log << "InitPathBoundary Failed" << std::endl; 
     return false;
   }
+  
   std::string borrow_lane_type;
   bool is_include_adc = config_.is_extend_lane_bounds_to_include_adc() &&
                         !injector_->planning_context()
@@ -103,6 +128,8 @@ bool LaneFollowPath::DecidePathBounds(std::vector<PathBoundary>* boundary) {
         *reference_line_info_, init_sl_state_, config_.extend_buffer(),
         &path_bound);
   }
+  
+  // Print curves logic...
   PrintCurves print_curve;
   auto indexed_obstacles = reference_line_info_->path_decision()->obstacles();
   for (const auto* obs : indexed_obstacles.Items()) {
@@ -122,6 +149,15 @@ bool LaneFollowPath::DecidePathBounds(std::vector<PathBoundary>* boundary) {
   std::vector<SLPolygon> obs_sl_polygons;
   PathBoundsDeciderUtil::GetSLPolygons(*reference_line_info_, &obs_sl_polygons,
                                        init_sl_state_);
+
+  // Debug Log GetSLPolygons Result
+  if (debug_log.is_open()) {
+      debug_log << "GetSLPolygons Result Count: " << obs_sl_polygons.size() << std::endl;
+      for (const auto& p : obs_sl_polygons) {
+          debug_log << "  > Poly ID: " << p.id() << " NudgeInfo: " << p.NudgeInfo() << std::endl;
+      }
+  }
+
   if (!PathBoundsDeciderUtil::GetBoundaryFromStaticObstacles(
           *reference_line_info_, &obs_sl_polygons, init_sl_state_, &path_bound,
           &blocking_obstacle_id, &path_narrowest_width)) {
@@ -129,8 +165,60 @@ bool LaneFollowPath::DecidePathBounds(std::vector<PathBoundary>* boundary) {
         "Failed to decide fine tune the boundaries after "
         "taking into consideration all static obstacles.";
     AERROR << msg;
+    if (debug_log.is_open()) debug_log << "GetBoundaryFromStaticObstacles Failed" << std::endl;
     return false;
   }
+
+  // --- Nudge Conflict Detection Logic ---
+  if (debug_log.is_open()) {
+      debug_log << "Initial blocking_obstacle_id: [" << blocking_obstacle_id << "]" << std::endl;
+      debug_log << "Path narrowest width: " << path_narrowest_width << std::endl;
+  }
+
+  if (blocking_obstacle_id.empty()) {
+    bool has_left = false, has_right = false;
+    std::string left_id, right_id;
+    int lc = 0, rc = 0, bc = 0, ic = 0;
+    
+    for (const auto& p : obs_sl_polygons) {
+      auto n = p.NudgeInfo();
+      if (n == SLPolygon::LEFT_NUDGE) {
+        has_left = true; left_id = p.id(); lc++;
+      } else if (n == SLPolygon::RIGHT_NUDGE) {
+        has_right = true; right_id = p.id(); rc++;
+      } else if (n == SLPolygon::BLOCKED) {
+        bc++;
+      } else if (n == SLPolygon::IGNORE) {
+        ic++;
+      }
+    }
+    
+    if (debug_log.is_open()) {
+        debug_log << "Nudge Summary: L=" << lc << ", R=" << rc << ", B=" << bc << ", I=" << ic << std::endl;
+    }
+    
+    if (has_left && has_right) {
+      double w = VehicleConfigHelper::GetConfig().vehicle_param().width();
+      double m = w + 0.5;
+      
+      if (debug_log.is_open()) {
+          debug_log << "CONFLICT DETECTED! Left+Right Nudge." << std::endl;
+          debug_log << "Vehicle Width: " << w << ", Min Passable: " << m << ", Actual: " << path_narrowest_width << std::endl;
+      }
+      
+      if (path_narrowest_width < m) {
+        blocking_obstacle_id = right_id.empty() ? left_id : right_id;
+        if (debug_log.is_open()) debug_log << ">>> SETTING BLOCKING ID: " << blocking_obstacle_id << " <<<" << std::endl;
+        AINFO << "[LaneFollowPath] CONFLICT BLOCKED! Set id: " << blocking_obstacle_id;
+      } else {
+        if (debug_log.is_open()) debug_log << "Width sufficient, PASSABLE." << std::endl;
+      }
+    }
+  }
+
+  // Close log file
+  if (debug_log.is_open()) debug_log.close();
+
   // 4. Append some extra path bound points to avoid zero-length path data.
   int counter = 0;
   while (!blocking_obstacle_id.empty() &&
@@ -172,11 +260,6 @@ bool LaneFollowPath::DecidePathBounds(std::vector<PathBoundary>* boundary) {
           << path_bound[0].l_lower.l << "," << path_bound[0].l_upper.l << " ]";
     return false;
   }
-  // std::vector<std::pair<double, double>> regular_path_bound_pair;
-  // for (size_t i = 0; i < path_bound.size(); ++i) {
-  //   regular_path_bound_pair.emplace_back(std::get<1>(path_bound[i]),
-  //                                        std::get<2>(path_bound[i]));
-  // }
 
   path_bound.set_blocking_obstacle_id(blocking_obstacle_id);
   RecordDebugInfo(path_bound, path_bound.label(), reference_line_info_);
