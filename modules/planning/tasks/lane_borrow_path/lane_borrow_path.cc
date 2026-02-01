@@ -162,7 +162,6 @@ bool LaneBorrowPath::DecidePathBounds(std::vector<PathBoundary>* boundary) {
 
     // 3. Static obstacles
     PathBound temp_path_bound = path_bound;
-    std::vector<SLPolygon> obs_sl_polygons;
     
     // DEBUG: Log PathDecision obstacles
     auto obstacles = reference_line_info_->path_decision()->obstacles();
@@ -174,6 +173,14 @@ bool LaneBorrowPath::DecidePathBounds(std::vector<PathBoundary>* boundary) {
                              " x [" + std::to_string(obs->PerceptionSLBoundary().start_l()) + "," + std::to_string(obs->PerceptionSLBoundary().end_l()) + "]");
     }
 
+#ifdef APOLLO_OFFICIAL_BUILD
+    // Official environment uses 5-parameter version
+    if (!PathBoundsDeciderUtil::GetBoundaryFromStaticObstacles(
+            *reference_line_info_, init_sl_state_,
+            &path_bound, &blocking_obstacle_id, &path_narrowest_width)) {
+#else
+    // Local environment uses 6-parameter version with SLPolygon
+    std::vector<SLPolygon> obs_sl_polygons;
     PathBoundsDeciderUtil::GetSLPolygons(*reference_line_info_,
                                          &obs_sl_polygons, init_sl_state_);
     WriteLaneBorrowDebug("SLPolygons count: " + std::to_string(obs_sl_polygons.size()));
@@ -181,6 +188,7 @@ bool LaneBorrowPath::DecidePathBounds(std::vector<PathBoundary>* boundary) {
     if (!PathBoundsDeciderUtil::GetBoundaryFromStaticObstacles(
             *reference_line_info_, &obs_sl_polygons, init_sl_state_,
             &path_bound, &blocking_obstacle_id, &path_narrowest_width)) {
+#endif
       WriteLaneBorrowDebug("GetBoundaryFromStaticObstacles FAILED");
       boundary->pop_back();
       continue;
